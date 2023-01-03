@@ -75,7 +75,7 @@ const Component = () => {
 
   return (
     <button onClick={onClick} ref={ref}>
-      hasBeenClicked ? 'Clicked!' : 'Click Me!'
+      {hasBeenClicked ? "Clicked!" : "Click Me!"}
     </button>
   );
 };
