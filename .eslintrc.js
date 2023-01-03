@@ -1,15 +1,19 @@
 module.exports = {
-    env: {
-        browser: true,
-        es6: true,
+  plugins: ["prettier"],
+  env: {
+    browser: true,
+    node: true,
+  },
+  extends: ["airbnb-base", "prettier"],
+  overrides: [
+    {
+      files: ["*.test.js"],
+      plugins: ["jest"],
+      extends: ["plugin:jest/recommended"],
     },
-    extends: ["airbnb-base"],
-    globals: {
-        Atomics: "readonly",
-        SharedArrayBuffer: "readonly",
-    },
-    parserOptions: {
-        ecmaVersion: 2018,
-        sourceType: "module",
-    },
+  ],
+  parserOptions: {
+    ecmaVersion: 2020,
+    sourceType: "module",
+  },
 };
