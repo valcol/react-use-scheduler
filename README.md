@@ -32,7 +32,7 @@
   <br />
 </div>
 
-`react-use-scheduler` helps you manage and prioritize tasks using the browser [Scheduler API](https://developer.mozilla.org/en-US/docs/Web/API/Scheduler). This allows you to prioritize the tasks that are the most important for a good user experience, making your page more responsive, while still allowing less critical work to be done. It will automatically lower the current and incomming tasks priorities if the associated component exit the viewport, restore their priorities if the component re-enter the viewport, and abort current tasks if the component unmount.
+`react-use-scheduler` helps you manage and prioritize tasks using the browser [Scheduler API](https://developer.mozilla.org/en-US/docs/Web/API/Scheduler). This allows you to prioritize the tasks that are the most important for a good user experience, making your page more responsive, while still allowing less critical work to be done. If the component associated with the tasks is no longer visible on the screen, the priorities of current and incoming tasks will be automatically lowered. If the component becomes visible again, the task priorities will be restored. Additionally, any tasks that are scheduled will be cancelled if the component is unmounted.
 
 # How to use
 
@@ -113,10 +113,10 @@ postTask(fn, options);
 
 **Options**
 
-| Name         | Type      | Default                        | Description                                                                                                                                                    |
-| ------------ | --------- | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **priority** | `string`  | `TASK_PRIORITIES.userBlocking` | Override the `priority` set in the options argument to the `useInView` hook.                                                                                   |
-| **detached** | `boolean` | `false`                        | Set to `true` to **not** bind the task to the component lifecycle. The priority will never change and the task will not be cancelled if the component unmount. |
+| Name         | Type      | Default                        | Description                                                                                                                                                                                                   |
+| ------------ | --------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **priority** | `string`  | `TASK_PRIORITIES.userBlocking` | Override the `priority` set in the options argument to the `useInView` hook.                                                                                                                                  |
+| **detached** | `boolean` | `false`                        | By setting `detached` to `true`, you can ensure that the task is not affected by the component's lifecycle. The priority will stay the same and the task will not be cancelled if the component is unmounted. |
 
 ### `ref`
 
@@ -126,6 +126,6 @@ postTask(fn, options);
 
 You can pass the `ref` to a component to bind the tasks scheduled with `postTask` to the component lifecycle and visibility.
 
-- If the component exits the viewport, all the scheduled task priorities will be set to `background`.
-- If the component re-enters the viewport, the scheduled task priorities will be restored to their initial values.
-- If the component is unmounted, the scheduled tasks will be aborted.
+- If the component exits the viewport, all the incomming and current task priorities will be set to `background`.
+- If the component re-enters the viewport, all task priorities will be restored to their initial values.
+- If the component is unmounted, all tasks will be aborted.
