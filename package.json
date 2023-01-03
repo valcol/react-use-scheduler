@@ -1,6 +1,6 @@
 {
   "name": "react-use-scheduler",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A React hook that allows you to schedule tasks and automatically orchestrate them based on your component lifecycle and visibility.",
   "main": "dist/index.js",
   "scripts": {

@@ -15,7 +15,9 @@ export const TASK_PRIORITIES = Object.freeze({
  * @param {string} [defaultPriority="user-blocking"] - The default priority, can be overridden by setting a task priority.
  * @returns {{postTask: postTask, ref: Function}}
  */
-const useScheduler = ({ defaultPriority = TASK_PRIORITIES.userBlocking }) => {
+const useScheduler = ({
+  defaultPriority = TASK_PRIORITIES.userBlocking,
+} = {}) => {
   const controllers = useRef({});
   const { ref, inView, entry } = useInView();
 

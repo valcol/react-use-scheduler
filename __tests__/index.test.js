@@ -33,9 +33,7 @@ describe("useScheduler", () => {
 
   it("still execute tasks when window.scheduler is unavailable", async () => {
     window.scheduler = undefined;
-    const { result, unmount } = renderHook(() =>
-      useScheduler({ priority: TASK_PRIORITIES.userVisible })
-    );
+    const { result, unmount } = renderHook(() => useScheduler());
     const { postTask } = result.current;
     const results = await postTask(() => "random task");
 
