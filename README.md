@@ -2,7 +2,7 @@
   <h1>
     <br/>
     <br/>
-    🪡
+    🧵
     <br />
     react-use-scheduler
     <br />
@@ -113,10 +113,11 @@ postTask(fn, options);
 
 **Options**
 
-| Name         | Type      | Default                        | Description                                                                                                                                                                                                   |
-| ------------ | --------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **priority** | `string`  | `TASK_PRIORITIES.userBlocking` | Override the `priority` set in the options argument to the `useInView` hook.                                                                                                                                  |
-| **detached** | `boolean` | `false`                        | By setting `detached` to `true`, you can ensure that the task is not affected by the component's lifecycle. The priority will stay the same and the task will not be cancelled if the component is unmounted. |
+| Name             | Type      | Default                        | Description                                                                                                                                                                     |
+| ---------------- | --------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **priority**     | `string`  | `TASK_PRIORITIES.userBlocking` | Override the `priority` set in the options argument to the `useInView` hook.                                                                                                    |
+| **detached**     | `boolean` | `false`                        | If set to `true`, the task will not be affected by the component's lifecycle. The priority will stay the same and the task will not be cancelled if the component is unmounted. |
+| **throwOnAbort** | `boolean` | `false`                        | If set to `true` an error will be throw if the task is aborted before completion                                                                                                |
 
 ### `ref`
 

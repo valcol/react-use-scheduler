@@ -24,22 +24,23 @@ const useScheduler = ({
   useEffect(() => {
     if (entry) {
       Object.entries(controllers.current).forEach(([priority, controller]) =>
-        controller.setPriority?.(inView ? priority : TASK_PRIORITIES.background)
+        controller?.setPriority?.(inView ? priority : TASK_PRIORITIES.background)
       );
     }
   }, [inView, entry]);
 
   useEffect(
     () => () =>
-      Object.values(controllers.current).forEach((controller) =>
-        controller?.abort()
-      ),
+      Object.entries(controllers.current).forEach(([priority, controller]) => {
+        controller?.abort();
+        controllers.current[priority] = null;
+    }),
     []
   );
-
+ 
   const postTask = async (
     task = Function.prototype,
-    { detached = false, priority = defaultPriority, ...options } = {}
+    { detached = false, priority = defaultPriority, throwOnAbort = false, ...options } = {}
   ) => {
     try {
       if (!window?.scheduler) return task();
@@ -63,13 +64,18 @@ const useScheduler = ({
           priority: taskControllerPriority,
         });
       }
-
+      const signal = !detached
+      ? controllers.current[taskPriority].signal
+      : undefined;
       return window.scheduler.postTask(task, {
-        signal: !detached
-          ? controllers.current[taskPriority].signal
-          : undefined,
+        signal,
         priority: detached ? taskPriority : undefined,
         ...options,
+      }).catch((e) => {
+        if (signal?.aborted && !throwOnAbort)
+          return;
+
+        throw(e);
       });
     } catch (e) {
       // eslint-disable-next-line no-console
