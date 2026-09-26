@@ -2,7 +2,7 @@
   <h1>
     <br/>
     <br/>
-    🪡
+    🧵
     <br />
     react-use-scheduler
     <br />
@@ -113,10 +113,11 @@ postTask(fn, options);
 
 **Options**
 
-| Name         | Type      | Default                        | Description                                                                                                                                                                                                   |
-| ------------ | --------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **priority** | `string`  | `defaultPriority`              | Override the `defaultPriority` set in the options argument to the `useScheduler` hook.                                                                                                                        |
-| **detached** | `boolean` | `false`                        | By setting `detached` to `true`, you can ensure that the task is not affected by the component's lifecycle. The priority will stay the same and the task will not be cancelled if the component is unmounted. |
+| Name             | Type      | Default           | Description                                                                                                                                                                     |
+| ---------------- | --------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **priority**     | `string`  | `defaultPriority` | Override the `defaultPriority` set in the options argument to the `useScheduler` hook.                                                                                          |
+| **detached**     | `boolean` | `false`           | If set to `true`, the task will not be affected by the component's lifecycle. The priority will stay the same and the task will not be cancelled if the component is unmounted. |
+| **throwOnAbort** | `boolean` | `false`           | If set to `true`, the returned promise rejects with an `AbortError` if the task is aborted before completion. Otherwise it resolves with `undefined`.                           |
 
 Any other option (e.g. `delay`) is passed to [`scheduler.postTask`](https://developer.mozilla.org/en-US/docs/Web/API/Scheduler/postTask). A custom `signal` is only honored for `detached` tasks, as attached tasks use the component's own signal.
 
@@ -130,4 +131,4 @@ You can pass the `ref` to a DOM element, or to a component that forwards it to o
 
 - If the component exits the viewport, all the incoming and current task priorities will be set to `background`.
 - If the component re-enters the viewport, all task priorities will be restored to their initial values.
-- If the component is unmounted, all tasks will be aborted: their promises reject with an `AbortError` `DOMException`, as will any attached task posted afterwards.
+- If the component is unmounted, all tasks will be aborted, as will any attached task posted afterwards. See `throwOnAbort` for how aborted tasks settle.

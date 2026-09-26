@@ -33,7 +33,9 @@ const useScheduler = ({
   useEffect(() => {
     isHiddenRef.current = isHidden;
     Object.entries(controllers.current).forEach(([priority, controller]) =>
-      controller?.setPriority?.(isHidden ? TASK_PRIORITIES.background : priority)
+      controller?.setPriority?.(
+        isHidden ? TASK_PRIORITIES.background : priority
+      )
     );
   }, [isHidden]);
 
@@ -52,13 +54,21 @@ const useScheduler = ({
   const postTask = useCallback(
     async (
       task = Function.prototype,
-      { detached = false, priority = defaultPriority, ...options } = {}
+      {
+        detached = false,
+        priority = defaultPriority,
+        throwOnAbort = false,
+        ...options
+      } = {}
     ) => {
       const scheduler =
         typeof window === "undefined" ? undefined : window.scheduler;
       if (!scheduler) return task();
 
-      if (!detached && isUnmounted.current) throw createAbortError();
+      if (!detached && isUnmounted.current) {
+        if (throwOnAbort) throw createAbortError();
+        return undefined;
+      }
 
       try {
         const isPriorityValid = VALID_PRIORITIES.includes(priority);
@@ -85,9 +95,10 @@ const useScheduler = ({
         }
 
         // The controller signal is set last so the task stays bound to the component lifecycle
-        return scheduler.postTask(task, {
-          ...options,
-          signal: controllers.current[taskPriority].signal,
+        const { signal } = controllers.current[taskPriority];
+        return scheduler.postTask(task, { ...options, signal }).catch((e) => {
+          if (signal.aborted && !throwOnAbort) return undefined;
+          throw e;
         });
       } catch (e) {
         // eslint-disable-next-line no-console

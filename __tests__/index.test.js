@@ -19,7 +19,6 @@ class TaskController {
     this.abort = (reason) => abort(this.signal, reason);
   }
 }
-window.TaskController = TaskController;
 jest.mock("react-intersection-observer", () => ({
   useInView: jest.fn(() => ({})),
 }));
@@ -28,6 +27,7 @@ describe("useScheduler", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     useInView.mockImplementation(() => ({}));
+    window.TaskController = TaskController;
     window.scheduler = { postTask: jest.fn(async (task) => task()) };
   });
 
@@ -166,18 +166,50 @@ describe("useScheduler", () => {
     });
   });
 
-  it("rejects attached tasks posted after the component is unmounted", async () => {
+  it("does not run attached tasks posted after the component is unmounted", async () => {
     const { result, unmount } = renderHook(() => useScheduler());
     const { postTask } = result.current;
     unmount();
 
-    await expect(postTask(() => "task")).rejects.toMatchObject({
-      name: "AbortError",
-    });
+    await expect(postTask(() => "task")).resolves.toBeUndefined();
+    await expect(
+      postTask(() => "task", { throwOnAbort: true })
+    ).rejects.toMatchObject({ name: "AbortError" });
     await expect(postTask(() => "task", { detached: true })).resolves.toEqual(
       "task"
     );
     expect(window.scheduler.postTask).toHaveBeenCalledTimes(1);
+  });
+
+  it("only rejects aborted tasks when throwOnAbort is set", async () => {
+    const abortError = new DOMException("Component unmounted", "AbortError");
+    window.scheduler.postTask = jest.fn(async (task, { signal }) => {
+      // eslint-disable-next-line no-param-reassign
+      signal.aborted = true;
+      throw abortError;
+    });
+    window.TaskController = function AbortableTaskController() {
+      this.signal = { aborted: false };
+      this.abort = abort;
+    };
+    const { result } = renderHook(() => useScheduler());
+
+    await expect(
+      result.current.postTask(() => "task")
+    ).resolves.toBeUndefined();
+    await expect(
+      result.current.postTask(() => "task", { throwOnAbort: true })
+    ).rejects.toBe(abortError);
+  });
+
+  it("still rejects tasks that fail for another reason", async () => {
+    const error = new Error("task error");
+    window.scheduler.postTask = jest.fn(async () => {
+      throw error;
+    });
+    const { result } = renderHook(() => useScheduler());
+
+    await expect(result.current.postTask(() => "task")).rejects.toBe(error);
   });
 
   it("keeps working after a StrictMode remount", async () => {
