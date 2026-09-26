@@ -1,13 +1,12 @@
 /**
  * @jest-environment jsdom
  */
-import { act, renderHook } from "@testing-library/react";
+import { renderHook } from "@testing-library/react";
 import { useInView } from "react-intersection-observer";
 import React from "react";
 
 import useScheduler, { TASK_PRIORITIES } from "../src";
 
-window.scheduler = { postTask: jest.fn(async (task) => task()) };
 const setPriority = jest.fn();
 const abort = jest.fn();
 class TaskController {
@@ -17,10 +16,9 @@ class TaskController {
       this.signal = newPriority;
       setPriority(newPriority);
     };
-    this.abort = () => abort(this.signal);
+    this.abort = (reason) => abort(this.signal, reason);
   }
 }
-window.TaskController = TaskController;
 jest.mock("react-intersection-observer", () => ({
   useInView: jest.fn(() => ({})),
 }));
@@ -28,6 +26,8 @@ jest.mock("react-intersection-observer", () => ({
 describe("useScheduler", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    useInView.mockImplementation(() => ({}));
+    window.TaskController = TaskController;
     window.scheduler = { postTask: jest.fn(async (task) => task()) };
   });
 
@@ -42,10 +42,21 @@ describe("useScheduler", () => {
     unmount();
   });
 
+  it("does not run a failing task twice when window.scheduler is unavailable", async () => {
+    window.scheduler = undefined;
+    const { result } = renderHook(() => useScheduler());
+    const task = jest.fn(() => {
+      throw new Error("task error");
+    });
+
+    await expect(result.current.postTask(task)).rejects.toThrow("task error");
+    expect(task).toHaveBeenCalledTimes(1);
+  });
+
   it("allow to queue tasks and abort the attached tasks on component unmount", async () => {
     const taskFn = (v) => v;
     const { result, unmount } = renderHook(() =>
-      useScheduler({ priority: TASK_PRIORITIES.userVisible })
+      useScheduler({ defaultPriority: TASK_PRIORITIES.userVisible })
     );
     const { postTask } = result.current;
     const tasks = [
@@ -102,94 +113,136 @@ describe("useScheduler", () => {
       "task with default priority",
       "task with default priority and extra options",
     ]);
-    expect(window.scheduler.postTask).toHaveBeenNthCalledWith(
-      1,
-      tasks[0].task,
-      {
-        priority: undefined,
-        signal: "user-blocking",
-      }
-    );
-    expect(window.scheduler.postTask).toHaveBeenNthCalledWith(
-      2,
-      tasks[1].task,
-      {
-        priority: undefined,
-        signal: "user-visible",
-      }
-    );
-    expect(window.scheduler.postTask).toHaveBeenNthCalledWith(
-      3,
-      tasks[2].task,
-      {
-        priority: undefined,
-        signal: "background",
-      }
-    );
-    expect(window.scheduler.postTask).toHaveBeenNthCalledWith(
-      4,
-      tasks[3].task,
-      {
-        priority: "user-blocking",
-        signal: undefined,
-      }
-    );
-    expect(window.scheduler.postTask).toHaveBeenNthCalledWith(
-      5,
-      tasks[4].task,
-      {
-        priority: "user-visible",
-        signal: undefined,
-      }
-    );
-    expect(window.scheduler.postTask).toHaveBeenNthCalledWith(
-      6,
-      tasks[5].task,
-      {
-        priority: "background",
-        signal: undefined,
-      }
-    );
-    expect(window.scheduler.postTask).toHaveBeenNthCalledWith(
-      7,
-      tasks[6].task,
-      {
-        priority: undefined,
-        signal: "user-blocking",
-      }
-    );
-    expect(window.scheduler.postTask).toHaveBeenNthCalledWith(
-      8,
-      tasks[7].task,
-      {
-        priority: undefined,
-        signal: "user-blocking",
-        delay: 1000,
-      }
+    const expectedOptions = [
+      { signal: "user-blocking" },
+      { signal: "user-visible" },
+      { signal: "background" },
+      { priority: "user-blocking" },
+      { priority: "user-visible" },
+      { priority: "background" },
+      { signal: "user-visible" },
+      { signal: "user-visible", delay: 1000 },
+    ];
+    expectedOptions.forEach((options, i) =>
+      expect(window.scheduler.postTask).toHaveBeenNthCalledWith(
+        i + 1,
+        tasks[i].task,
+        options
+      )
     );
 
     unmount();
 
     expect(abort).toHaveBeenCalledTimes(3);
+    expect(abort.mock.calls[0][1]).toBeInstanceOf(DOMException);
+    expect(abort.mock.calls[0][1].name).toEqual("AbortError");
     expect(setPriority).not.toHaveBeenCalled();
   });
 
+  it("uses the default priority and warns when the priority is invalid", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const { result } = renderHook(() =>
+      useScheduler({ defaultPriority: TASK_PRIORITIES.background })
+    );
+    const task = () => "task";
+
+    await result.current.postTask(task, { priority: "invalid" });
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(window.scheduler.postTask).toHaveBeenCalledWith(task, {
+      signal: "background",
+    });
+    warn.mockRestore();
+  });
+
+  it("keeps attached tasks bound to the component even if a signal is passed", async () => {
+    const { result } = renderHook(() => useScheduler());
+    const task = () => "task";
+
+    await result.current.postTask(task, { signal: "user signal" });
+
+    expect(window.scheduler.postTask).toHaveBeenCalledWith(task, {
+      signal: "user-blocking",
+    });
+  });
+
+  it("does not run attached tasks posted after the component is unmounted", async () => {
+    const { result, unmount } = renderHook(() => useScheduler());
+    const { postTask } = result.current;
+    unmount();
+
+    await expect(postTask(() => "task")).resolves.toBeUndefined();
+    await expect(
+      postTask(() => "task", { throwOnAbort: true })
+    ).rejects.toMatchObject({ name: "AbortError" });
+    await expect(postTask(() => "task", { detached: true })).resolves.toEqual(
+      "task"
+    );
+    expect(window.scheduler.postTask).toHaveBeenCalledTimes(1);
+  });
+
+  it("only rejects aborted tasks when throwOnAbort is set", async () => {
+    const abortError = new DOMException("Component unmounted", "AbortError");
+    window.scheduler.postTask = jest.fn(async (task, { signal }) => {
+      // eslint-disable-next-line no-param-reassign
+      signal.aborted = true;
+      throw abortError;
+    });
+    window.TaskController = function AbortableTaskController() {
+      this.signal = { aborted: false };
+      this.abort = abort;
+    };
+    const { result } = renderHook(() => useScheduler());
+
+    await expect(
+      result.current.postTask(() => "task")
+    ).resolves.toBeUndefined();
+    await expect(
+      result.current.postTask(() => "task", { throwOnAbort: true })
+    ).rejects.toBe(abortError);
+  });
+
+  it("still rejects tasks that fail for another reason", async () => {
+    const error = new Error("task error");
+    window.scheduler.postTask = jest.fn(async () => {
+      throw error;
+    });
+    const { result } = renderHook(() => useScheduler());
+
+    await expect(result.current.postTask(() => "task")).rejects.toBe(error);
+  });
+
+  it("keeps working after a StrictMode remount", async () => {
+    const { result } = renderHook(() => useScheduler(), {
+      wrapper: React.StrictMode,
+    });
+
+    await expect(result.current.postTask(() => "task")).resolves.toEqual(
+      "task"
+    );
+    expect(abort).not.toHaveBeenCalled();
+  });
+
+  it("returns a stable postTask function", () => {
+    const { result, rerender } = renderHook(() => useScheduler());
+    const { postTask } = result.current;
+    rerender();
+
+    expect(result.current.postTask).toBe(postTask);
+  });
+
   it("change the current and incoming tasks priority when the component visibility change", async () => {
-    const elem = document.createElement("div");
     const taskFn = (v) => v;
 
-    // First render, we're not sure the coponent is in view, tasks priorities are keept
+    // First render, we're not sure the component is in view, tasks priorities are kept
     useInView.mockImplementation(() => ({
       ref: {},
       inView: false,
       entry: null,
     }));
     const { result, rerender, unmount } = renderHook(() =>
-      useScheduler({ priority: TASK_PRIORITIES.userVisible })
+      useScheduler({ defaultPriority: TASK_PRIORITIES.userVisible })
     );
-    act(() => {
-      result.current.ref = React.createRef(elem);
-    });
 
     const tasks = [
       {
@@ -216,18 +269,12 @@ describe("useScheduler", () => {
     expect(window.scheduler.postTask).toHaveBeenNthCalledWith(
       1,
       tasks[0].task,
-      {
-        priority: undefined,
-        signal: "user-blocking",
-      }
+      { signal: "user-blocking" }
     );
     expect(window.scheduler.postTask).toHaveBeenNthCalledWith(
       2,
       tasks[2].task,
-      {
-        priority: undefined,
-        signal: "background",
-      }
+      { signal: "background" }
     );
 
     // The component is not in view, tasks priorities are lowered
@@ -241,29 +288,12 @@ describe("useScheduler", () => {
       tasks.map(({ task, options }) => result.current[0](task, options))
     );
 
-    expect(window.scheduler.postTask).toHaveBeenNthCalledWith(
-      3,
-      tasks[0].task,
-      {
-        priority: undefined,
-        signal: "background",
-      }
-    );
-    expect(window.scheduler.postTask).toHaveBeenNthCalledWith(
-      4,
-      tasks[1].task,
-      {
-        priority: undefined,
-        signal: "background",
-      }
-    );
-    expect(window.scheduler.postTask).toHaveBeenNthCalledWith(
-      5,
-      tasks[2].task,
-      {
-        priority: undefined,
-        signal: "background",
-      }
+    [3, 4, 5].forEach((n, i) =>
+      expect(window.scheduler.postTask).toHaveBeenNthCalledWith(
+        n,
+        tasks[i].task,
+        { signal: "background" }
+      )
     );
 
     // The component is in view, tasks priorities are restored
@@ -278,36 +308,19 @@ describe("useScheduler", () => {
       tasks.map(({ task, options }) => result.current[0](task, options))
     );
 
-    expect(window.scheduler.postTask).toHaveBeenNthCalledWith(
-      6,
-      tasks[0].task,
-      {
-        priority: undefined,
-        signal: "user-blocking",
-      }
-    );
-    expect(window.scheduler.postTask).toHaveBeenNthCalledWith(
-      7,
-      tasks[1].task,
-      {
-        priority: undefined,
-        signal: "user-visible",
-      }
-    );
-    expect(window.scheduler.postTask).toHaveBeenNthCalledWith(
-      8,
-      tasks[2].task,
-      {
-        priority: undefined,
-        signal: "background",
-      }
+    ["user-blocking", "user-visible", "background"].forEach((signal, i) =>
+      expect(window.scheduler.postTask).toHaveBeenNthCalledWith(
+        6 + i,
+        tasks[i].task,
+        { signal }
+      )
     );
 
     unmount();
 
     expect(abort).toHaveBeenCalledTimes(3);
-    expect(abort).toHaveBeenCalledWith("user-blocking");
-    expect(abort).toHaveBeenCalledWith("background");
-    expect(abort).toHaveBeenCalledWith("user-visible");
+    expect(abort).toHaveBeenCalledWith("user-blocking", expect.anything());
+    expect(abort).toHaveBeenCalledWith("background", expect.anything());
+    expect(abort).toHaveBeenCalledWith("user-visible", expect.anything());
   });
 });
