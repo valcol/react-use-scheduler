@@ -34,14 +34,22 @@
 
 `react-use-scheduler` helps you manage and prioritize tasks using the browser [Scheduler API](https://developer.mozilla.org/en-US/docs/Web/API/Scheduler). This allows you to prioritize the tasks that are the most important for a good user experience, making your page more responsive, while still allowing less critical work to be done. If the component associated with the tasks is no longer visible on the screen, the priorities of current and incoming tasks will be automatically lowered. If the component becomes visible again, the task priorities will be restored. Additionally, any tasks that are scheduled will be cancelled if the component is unmounted.
 
+## When to use it
+
+Use `react-use-scheduler` for work that happens **outside of React rendering** and belongs to a component: processing data, parsing, computing layouts, prefetching, sending analytics, updating a canvas or a third-party widget...
+
+If the expensive part is **rendering**, reach for React's own concurrent features instead: [`useTransition`](https://react.dev/reference/react/useTransition) and [`useDeferredValue`](https://react.dev/reference/react/useDeferredValue) already let React interrupt and prioritize render work.
+
+Keep in mind that a priority only decides _which_ task runs next: a single 200ms task still blocks the main thread for 200ms. To keep your page responsive, split long tasks with [`yieldToMain`](#yieldtomain).
+
 # How to use
 
 ```js
 // Use object destructuring, so you don't need to remember the exact order
-const { postTask, ref } = useScheduler(options);
+const { postTask, ref, yieldToMain } = useScheduler(options);
 
 // Or array destructuring if you want to customize the field names
-const [postTask, ref] = useScheduler(options);
+const [postTask, ref, yieldToMain] = useScheduler(options);
 ```
 
 <br />
@@ -51,7 +59,7 @@ const [postTask, ref] = useScheduler(options);
 
 <br />
 
-The `useScheduler` hook returns a `postTask` function and a `ref` that you can pass to a component to bind the tasks scheduled with `postTask` to the component lifecycle and visibility. You can pass a default `priority` as an option if you want.
+The `useScheduler` hook returns a `postTask` function, a `yieldToMain` function and a `ref` that you can pass to a component to bind the tasks scheduled with `postTask` to the component lifecycle and visibility. You can pass a `defaultPriority` as an option if you want.
 
 ```js
 import React, { useState } from "react";
@@ -79,6 +87,44 @@ const Component = () => {
     </button>
   );
 };
+```
+
+### Splitting long tasks
+
+Call `yieldToMain` between chunks of work to let the browser handle user input and paint. The rest of the task keeps its priority, follows the component visibility, and stops if the component is unmounted.
+
+```js
+const Chart = ({ points }) => {
+  const { postTask, yieldToMain, ref } = useScheduler({
+    defaultPriority: TASK_PRIORITIES.userVisible,
+  });
+
+  const onExport = () =>
+    postTask(async () => {
+      const rows = [];
+      for (const slice of chunk(points, 500)) {
+        rows.push(...slice.map(toCsvRow));
+        await yieldToMain();
+      }
+      download(rows.join("\n"));
+    });
+
+  return <canvas ref={ref} onClick={onExport} />;
+};
+```
+
+### Cancelling tasks
+
+Pass a `signal` to cancel a single task, e.g. when the data it works on changes:
+
+```js
+const { postTask, ref } = useScheduler();
+
+useEffect(() => {
+  const controller = new AbortController();
+  postTask(() => buildSearchIndex(items), { signal: controller.signal });
+  return () => controller.abort();
+}, [items]);
 ```
 
 # API
@@ -113,13 +159,31 @@ postTask(fn, options);
 
 **Options**
 
-| Name             | Type      | Default           | Description                                                                                                                                                                     |
-| ---------------- | --------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **priority**     | `string`  | `defaultPriority` | Override the `defaultPriority` set in the options argument to the `useScheduler` hook.                                                                                          |
-| **detached**     | `boolean` | `false`           | If set to `true`, the task will not be affected by the component's lifecycle. The priority will stay the same and the task will not be cancelled if the component is unmounted. |
-| **throwOnAbort** | `boolean` | `false`           | If set to `true`, the returned promise rejects with an `AbortError` if the task is aborted before completion. Otherwise it resolves with `undefined`.                           |
+| Name             | Type          | Default           | Description                                                                                                                                                                     |
+| ---------------- | ------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **priority**     | `string`      | `defaultPriority` | Override the `defaultPriority` set in the options argument to the `useScheduler` hook.                                                                                          |
+| **detached**     | `boolean`     | `false`           | If set to `true`, the task will not be affected by the component's lifecycle. The priority will stay the same and the task will not be cancelled if the component is unmounted. |
+| **throwOnAbort** | `boolean`     | `false`           | If set to `true`, the returned promise rejects with an `AbortError` if the task is aborted before completion. Otherwise it resolves with `undefined`.                           |
+| **signal**       | `AbortSignal` | `undefined`       | Cancel this task only. Once aborted, the task will not run and the returned promise settles right away (see `throwOnAbort`). The task stays bound to the component lifecycle.   |
 
-Any other option (e.g. `delay`) is passed to [`scheduler.postTask`](https://developer.mozilla.org/en-US/docs/Web/API/Scheduler/postTask). A custom `signal` is only honored for `detached` tasks, as attached tasks use the component's own signal.
+Any other option (e.g. `delay`) is passed to [`scheduler.postTask`](https://developer.mozilla.org/en-US/docs/Web/API/Scheduler/postTask).
+
+### `yieldToMain`
+
+```js
+await yieldToMain(options);
+```
+
+Yields to the main thread, so the browser can respond to user input before the rest of your task runs. It uses [`scheduler.yield`](https://developer.mozilla.org/en-US/docs/Web/API/Scheduler/yield) when available, which gives the rest of the task the same priority as the task it's called from. Otherwise it falls back to `setTimeout`.
+
+It throws an `AbortError` if the component was unmounted in the meantime, so the rest of the task doesn't run. Inside a task scheduled with `postTask`, this error is handled for you according to `throwOnAbort`.
+
+**Options**
+
+| Name         | Type          | Default     | Description                                                        |
+| ------------ | ------------- | ----------- | ------------------------------------------------------------------ |
+| **detached** | `boolean`     | `false`     | If set to `true`, don't throw if the component was unmounted.      |
+| **signal**   | `AbortSignal` | `undefined` | Throw the signal's abort reason if it was aborted in the meantime. |
 
 ### `ref`
 

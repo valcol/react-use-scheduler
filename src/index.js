@@ -12,14 +12,32 @@ export const TASK_PRIORITIES = Object.freeze({
 
 const VALID_PRIORITIES = Object.values(TASK_PRIORITIES);
 
-const createAbortError = () =>
-  new DOMException("Component unmounted", "AbortError");
+const createAbortError = (message = "Component unmounted") =>
+  new DOMException(message, "AbortError");
+
+const getAbortReason = (signal) =>
+  signal.reason ?? createAbortError("Task aborted");
+
+const getScheduler = () =>
+  typeof window === "undefined" ? undefined : window.scheduler;
+
+// Settle as soon as the signal aborts, without waiting for the task to be run
+const raceAbort = (promise, signal) => {
+  if (!signal) return promise;
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(getAbortReason(signal));
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise
+      .then(resolve, reject)
+      .finally(() => signal.removeEventListener("abort", onAbort));
+  });
+};
 
 /**
  * A hook that allows you to schedule tasks and to automatically orchestrate them based on your component lifecycle and visibility.
  * @param {Object} [options]
  * @param {string} [options.defaultPriority="user-blocking"] - The default priority, can be overridden by setting a task priority.
- * @returns {{postTask: Function, ref: Function}}
+ * @returns {{postTask: Function, yieldToMain: Function, ref: Function}}
  */
 const useScheduler = ({
   defaultPriority = TASK_PRIORITIES.userBlocking,
@@ -58,18 +76,33 @@ const useScheduler = ({
         detached = false,
         priority = defaultPriority,
         throwOnAbort = false,
+        signal: taskSignal,
         ...options
       } = {}
     ) => {
-      const scheduler =
-        typeof window === "undefined" ? undefined : window.scheduler;
-      if (!scheduler) return task();
-
-      if (!detached && isUnmounted.current) {
-        if (throwOnAbort) throw createAbortError();
+      const isAborted = () =>
+        Boolean(taskSignal?.aborted) || (!detached && isUnmounted.current);
+      const settleAbort = (error) => {
+        if (throwOnAbort) throw error;
         return undefined;
+      };
+
+      if (taskSignal?.aborted) return settleAbort(getAbortReason(taskSignal));
+      if (!detached && isUnmounted.current)
+        return settleAbort(createAbortError());
+
+      const scheduler = getScheduler();
+      if (!scheduler) {
+        try {
+          return await task();
+        } catch (e) {
+          if (isAborted()) return settleAbort(e);
+          throw e;
+        }
       }
 
+      let signal;
+      let promise;
       try {
         const isPriorityValid = VALID_PRIORITIES.includes(priority);
         if (!isPriorityValid)
@@ -79,39 +112,68 @@ const useScheduler = ({
           );
 
         const taskPriority = isPriorityValid ? priority : defaultPriority;
+        // A task aborted through its own signal must not run, even if it is still queued
+        const scheduledTask = taskSignal
+          ? () => {
+              if (taskSignal.aborted) throw getAbortReason(taskSignal);
+              return task();
+            }
+          : task;
 
-        if (detached)
-          return scheduler.postTask(task, {
+        if (detached) {
+          promise = scheduler.postTask(scheduledTask, {
             ...options,
             priority: taskPriority,
           });
+        } else {
+          if (!controllers.current[taskPriority]) {
+            controllers.current[taskPriority] = new window.TaskController({
+              priority: isHiddenRef.current
+                ? TASK_PRIORITIES.background
+                : taskPriority,
+            });
+          }
 
-        if (!controllers.current[taskPriority]) {
-          controllers.current[taskPriority] = new window.TaskController({
-            priority: isHiddenRef.current
-              ? TASK_PRIORITIES.background
-              : taskPriority,
-          });
+          // The controller signal is set last so the task stays bound to the component lifecycle
+          signal = controllers.current[taskPriority].signal;
+          promise = scheduler.postTask(scheduledTask, { ...options, signal });
         }
-
-        // The controller signal is set last so the task stays bound to the component lifecycle
-        const { signal } = controllers.current[taskPriority];
-        return scheduler.postTask(task, { ...options, signal }).catch((e) => {
-          if (signal.aborted && !throwOnAbort) return undefined;
-          throw e;
-        });
       } catch (e) {
         // eslint-disable-next-line no-console
         console.error(e);
         return task();
       }
+
+      try {
+        return await raceAbort(promise, taskSignal);
+      } catch (e) {
+        if (signal?.aborted || isAborted()) return settleAbort(e);
+        throw e;
+      }
     },
     [defaultPriority]
   );
 
-  const returnValue = [postTask, ref];
+  const yieldToMain = useCallback(
+    async ({ detached = false, signal: taskSignal } = {}) => {
+      const scheduler = getScheduler();
+      // scheduler.yield() inherits the priority and signal of the task it is called from
+      if (scheduler?.yield) await scheduler.yield();
+      else
+        await new Promise((resolve) => {
+          setTimeout(resolve, 0);
+        });
+
+      if (taskSignal?.aborted) throw getAbortReason(taskSignal);
+      if (!detached && isUnmounted.current) throw createAbortError();
+    },
+    []
+  );
+
+  const returnValue = [postTask, ref, yieldToMain];
   returnValue.postTask = postTask;
   returnValue.ref = ref;
+  returnValue.yieldToMain = yieldToMain;
 
   return returnValue;
 };

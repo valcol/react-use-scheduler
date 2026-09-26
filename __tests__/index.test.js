@@ -155,14 +155,132 @@ describe("useScheduler", () => {
     warn.mockRestore();
   });
 
-  it("keeps attached tasks bound to the component even if a signal is passed", async () => {
-    const { result } = renderHook(() => useScheduler());
-    const task = () => "task";
+  describe("with a task signal", () => {
+    // Queue tasks instead of running them right away, so they can be aborted before running
+    let queue;
+    const flush = () => queue.splice(0).forEach((run) => run());
+    beforeEach(() => {
+      queue = [];
+      window.scheduler.postTask = jest.fn(
+        (task) =>
+          new Promise((resolve, reject) => {
+            queue.push(() => {
+              try {
+                resolve(task());
+              } catch (e) {
+                reject(e);
+              }
+            });
+          })
+      );
+    });
 
-    await result.current.postTask(task, { signal: "user signal" });
+    it("keeps attached tasks bound to the component", async () => {
+      const { result } = renderHook(() => useScheduler());
+      const controller = new AbortController();
+      const promise = result.current.postTask(() => "task", {
+        signal: controller.signal,
+      });
+      flush();
 
-    expect(window.scheduler.postTask).toHaveBeenCalledWith(task, {
-      signal: "user-blocking",
+      await expect(promise).resolves.toEqual("task");
+      expect(window.scheduler.postTask).toHaveBeenCalledWith(
+        expect.any(Function),
+        { signal: "user-blocking" }
+      );
+    });
+
+    it("settles right away and never runs the task once aborted", async () => {
+      const { result } = renderHook(() => useScheduler());
+      const task = jest.fn();
+      const controller = new AbortController();
+      const promise = result.current.postTask(task, {
+        signal: controller.signal,
+      });
+      controller.abort();
+
+      await expect(promise).resolves.toBeUndefined();
+      flush();
+      expect(task).not.toHaveBeenCalled();
+    });
+
+    it("rejects with the abort reason when throwOnAbort is set", async () => {
+      const { result } = renderHook(() => useScheduler());
+      const controller = new AbortController();
+      const promise = result.current.postTask(() => "task", {
+        signal: controller.signal,
+        throwOnAbort: true,
+        detached: true,
+      });
+      controller.abort("cancelled");
+
+      await expect(promise).rejects.toEqual("cancelled");
+    });
+
+    it("does not post tasks with an already aborted signal", async () => {
+      const { result } = renderHook(() => useScheduler());
+
+      await expect(
+        result.current.postTask(() => "task", { signal: AbortSignal.abort() })
+      ).resolves.toBeUndefined();
+      expect(window.scheduler.postTask).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("yieldToMain", () => {
+    it("uses scheduler.yield when available", async () => {
+      window.scheduler.yield = jest.fn(async () => {});
+      const { result } = renderHook(() => useScheduler());
+
+      await expect(result.current.yieldToMain()).resolves.toBeUndefined();
+      expect(window.scheduler.yield).toHaveBeenCalledTimes(1);
+    });
+
+    it("falls back to a timeout without scheduler.yield", async () => {
+      window.scheduler = undefined;
+      const { result } = renderHook(() => useScheduler());
+
+      await expect(result.current[2]()).resolves.toBeUndefined();
+    });
+
+    it("throws once the component is unmounted, unless detached", async () => {
+      const { result, unmount } = renderHook(() => useScheduler());
+      const { yieldToMain } = result.current;
+      unmount();
+
+      await expect(yieldToMain()).rejects.toMatchObject({
+        name: "AbortError",
+      });
+      await expect(yieldToMain({ detached: true })).resolves.toBeUndefined();
+    });
+
+    it("throws once its signal is aborted", async () => {
+      const { result } = renderHook(() => useScheduler());
+
+      await expect(
+        result.current.yieldToMain({ signal: AbortSignal.abort("stop") })
+      ).rejects.toEqual("stop");
+    });
+
+    it("stops a task that yields after unmount, according to throwOnAbort", async () => {
+      window.scheduler = undefined;
+      const { result, unmount } = renderHook(() => useScheduler());
+      const { postTask, yieldToMain } = result.current;
+      const afterYield = jest.fn();
+      const task = async () => {
+        await yieldToMain();
+        afterYield();
+      };
+
+      const promise = postTask(task);
+      const throwingPromise = postTask(task, { throwOnAbort: true });
+      unmount();
+
+      await expect(promise).resolves.toBeUndefined();
+      await expect(throwingPromise).rejects.toMatchObject({
+        name: "AbortError",
+      });
+      expect(afterYield).not.toHaveBeenCalled();
     });
   });
 
