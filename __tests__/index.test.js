@@ -330,6 +330,41 @@ describe("useScheduler", () => {
     await expect(result.current.postTask(() => "task")).rejects.toBe(error);
   });
 
+  it("still rejects tasks that fail for another reason after unmount", async () => {
+    const error = new Error("task error");
+    let fail;
+    const { result, unmount } = renderHook(() => useScheduler());
+
+    const promise = result.current.postTask(
+      () =>
+        new Promise((resolve, reject) => {
+          fail = () => reject(error);
+        })
+    );
+    unmount();
+    fail();
+
+    await expect(promise).rejects.toBe(error);
+  });
+
+  it("still rejects tasks that fail for another reason after unmount when window.scheduler is unavailable", async () => {
+    window.scheduler = undefined;
+    const error = new Error("task error");
+    let fail;
+    const { result, unmount } = renderHook(() => useScheduler());
+
+    const promise = result.current.postTask(
+      () =>
+        new Promise((resolve, reject) => {
+          fail = () => reject(error);
+        })
+    );
+    unmount();
+    fail();
+
+    await expect(promise).rejects.toBe(error);
+  });
+
   it("keeps working after a StrictMode remount", async () => {
     const { result } = renderHook(() => useScheduler(), {
       wrapper: React.StrictMode,

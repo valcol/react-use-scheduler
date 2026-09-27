@@ -86,6 +86,12 @@ const useScheduler = ({
         if (throwOnAbort) throw error;
         return undefined;
       };
+      // Only swallow errors caused by an abort, so real task failures still reject
+      const isAbortError = (error, controllerSignal) =>
+        error?.name === "AbortError" ||
+        (Boolean(taskSignal?.aborted) && error === taskSignal.reason) ||
+        (Boolean(controllerSignal?.aborted) &&
+          error === controllerSignal.reason);
 
       if (taskSignal?.aborted) return settleAbort(getAbortReason(taskSignal));
       if (!detached && isUnmounted.current)
@@ -96,7 +102,7 @@ const useScheduler = ({
         try {
           return await task();
         } catch (e) {
-          if (isAborted()) return settleAbort(e);
+          if (isAborted() && isAbortError(e)) return settleAbort(e);
           throw e;
         }
       }
@@ -147,7 +153,8 @@ const useScheduler = ({
       try {
         return await raceAbort(promise, taskSignal);
       } catch (e) {
-        if (signal?.aborted || isAborted()) return settleAbort(e);
+        if ((signal?.aborted || isAborted()) && isAbortError(e, signal))
+          return settleAbort(e);
         throw e;
       }
     },
